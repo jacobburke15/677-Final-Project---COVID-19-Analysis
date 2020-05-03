@@ -1,0 +1,50 @@
+---
+title: "COVID-19 Analysis - Massachusetts Vs. New York State"
+author: "Jacob Burke"
+date: "02/05/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+```
+
+# Introduction 
+
+For this project I decided to set my focus on the comparisons of COVID-19 infection rates and spread counts between state levels. More specifically I am comparing COVID counts and the infection rates of Massachusetts to New York. The data that I will be using can be found from the link https://usafacts.org/visualizations/coronavirus-covid-19-spread-map/ .The data set found in this source encapsulates confirmed COVID-19 cases from multiple states in the US dating from Jan 22nd - May 1st. 
+
+
+# Data Cleaning
+
+Before we go any further, I need to subset the original data set to encapsulate just the confirmed COVID-19 counts for MA and NY specifically. The data also has to be gathered as the dates are currently in the column names. Below is the code used to clean the data set prior to further analysis. 
+
+```{r}
+
+data <- read.csv("covid_confirmed_usafacts.csv")
+
+data <- filter(data, State == "NY" | State == "MA")
+
+my_data2 <- gather(my_data,
+                   key = "arrest_attribute",
+                   value = "arrest_estimate",
+                   -state)
+
+data <- gather(data, 
+               key = "Date", 
+               value = "Count", -c("ï..countyFIPS", "County.Name", 
+                          "State", "stateFIPS"))
+
+data$Date <- substring(data$Date, 2)
+
+data <- data[, -c(1, 4)]
+
+data <- data %>% group_by(State, Date) %>%
+      summarise(count = sum(Count))
+
+## now we have the state counts, each day, for MA and NY
+```
+
+# EDA
+
