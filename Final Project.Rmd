@@ -1,5 +1,5 @@
 ---
-title: "COVID-19 Analysis - Massachusetts Vs. New York State"
+title: "COVID-19 Analysis by County Level"
 author: "Jacob Burke"
 date: "02/05/2020"
 output: pdf_document
@@ -22,7 +22,7 @@ For this project I decided to set my focus on the comparisons of COVID-19 infect
 
 # Data Cleaning
 
-Before we go any further, I need to subset the original data set to encapsulate just the confirmed COVID-19 counts for MA and NY specifically. The data also has to be gathered as the dates are currently in the column names. The code used to clean the data set prior to further analysis can be found within the corresponding .Rmd file for this report. 
+Before we go any further, I need to subset the original data set to encapsulate just the confirmed COVID-19 counts for Worcester and Middlesex specifically. The data also has to be gathered as the dates are currently in the column names. The code used to clean the data set prior to further analysis can be found within the corresponding .Rmd file for this report. 
 
 ```{r, echo = F}
 
@@ -159,18 +159,163 @@ ggplot(worc)+
 From here, we can see that both counties are currently not controlling the infectivity of COVID-19 too well, as the lambda value continues to stay fairly high (as of May 1st). However, Middlesex has had a drop in infectivity in the last week or so, which is actually better than Worcester's case currently as their infectivity is continuing to consistently rise. However, of course this change in infectivity is all relative as Middlesex consistently has a higher number of COVID-19 cases compared to Worcester. This could be an insight into how well Middlesex is social distancing compared to Worcester. 
 
 
+# Modeling
+
+Now, for the purposes of modeling I am going to fit a log-linear model to both county level epidemic curves. This is a common model fit used when dealing with data analysis in epidemiology. The log-linear regression model is of the form _log( y) = r × t + b_ where _y_ is the incidence, _r_ is the growth rate, _t_ is the number of days since the start of the outbreak, and _b_ is the intercept. Typically, two models are fitted, one for the growth-phase and one for the decay phase of a epidemic curve. Therefore, to have both of these models fit we need to determine a "peak" for the curve, and the decay phase will then be modeled to the data past that. 
+
+Modeling the decay phase to the data is particularly interesting, because we are then in essence able to develop an approximate prediction towards when local transmission will be extinguished within both counties. 
+
+Using the _incidence_ package again from R, we can locate the optimal "peak" and fit the growth and decay log linear models to both the Worcester County and Middlesex County COVID-19 data. 
+
+## Middlesex County
+
+Fitting the model. 
+
+```{r, echo = F}
+
+## Middlesex 
+
+inc <- select(mid, Date, `New Counts`)
+
+inc <- inc %>% uncount(`New Counts`)
+
+incidence_obj <- incidence(inc$Date)
 
 
-```{r}
+mid_incidence_fit <- fit(incidence_obj)
 
-us_incidence_fit <- incidence::fit(mid$`New Counts`, split = NULL)
-
-?incidence::fit()
-
-?incidence()
+plot(incidence_obj) %>% add_incidence_fit(mid_incidence_fit) + labs(title = "Growth Log-Linear Model fit to Middlesex County COVID-19 Cases")
 
 ```
 
+However, what we can see here is that the model here isn't an optimal fit, because we are including the number of of very early cases that did not appear to establish sustained chains of local transmission (ie. first 3 weeks in March). To create a better model fit, let’s exclude these date counts. 
+
+```{r, echo = F, warning = F}
+
+
+incidence_obj <- incidence(inc$Date, first_date = "2020-03-20")
+
+
+mid_incidence_fit <- fit(incidence_obj)
+
+plot(incidence_obj) %>% add_incidence_fit(mid_incidence_fit)+ labs(title = "Growth Log-Linear Model fit to Middlesex County COVID-19 Cases")
+
+```
+
+We can see that is is a much better fit. Now, lets set the "peak" value to April 24th, where the largest counts of COVID-19 were recorded for most counties in Massachussets. Then, we can model both the growth and decay phases for Middlesex AND Worcester County. 
+
+## Middlesex & Worcester County
+
+```{r, echo = F}
+## Middlesex
+
+mid_incidence_fit <- fit(incidence_obj, split = "2020-04-24")
+
+plot(incidence_obj) %>% add_incidence_fit(mid_incidence_fit) + labs(title = "Growth and Decay Log-Linear Model fit to Middlesex County COVID-19 Cases")
+
+## Worcester
+
+inc2 <- select(worc, Date, `New Counts`)
+
+inc2 <- inc2 %>% uncount(`New Counts`)
+
+incidence_obj2 <- incidence(inc2$Date, first_date = "2020-03-20")
+
+worc_incidence_fit <- fit(incidence_obj2, split = "2020-04-24")
+
+plot(incidence_obj2) %>% add_incidence_fit(worc_incidence_fit) + labs(title = "Growth and Decay Log-Linear Model fit to Worcester County COVID-19 Cases")
+
+
+
+```
+
+Now, what we can see from these visuals that both counties fit well to the growth phase model. However, where Middlesex seems to be fitting well to the decay phase as well showing a particular drop starting from April 24th, Worcester County is not show as much of a decay following that date. 
+
+We can obvioulsy see that this is because Worcester's COVID-19 counts don't have as much of a distinct drop following April 24th, compared to Middlesex's. The other limitation here, is that with this still being a very new set of data, we don't have a large number of dates recorded with data _past_ the peak of April 24th, and so a better decay phase for Worcester may possibly be fit once further data is recorded on it's respective COVID-19 cases for the month of May. 
+
+# Extrapolating 
+
+Now, from these models, what we would like to do is see if we can extrapolate and develop an approximate prediction towards when (date-wise) that COVID-19 local transmission could start to really fall within both counties.
+
+This is what we will do below now, for both counties using the fitted log-linear models. 
+
+```{r, echo =F}
+
+## Middlesex County
+
+inc_mod <- mid_incidence_fit$after$model
+
+incidence_peak <- find_peak(incidence_obj)
+
+preds <- exp(predict(inc_mod, newdata=data.frame(dates.x=1:100), type="response"))
+
+pred_decay_incidence <- tibble(dates= incidence_peak + 0:99,
+                               incident_cases=as.integer(preds),
+                               data_type="predicted")
+
+
+pred_decay_incidence %>%
+  bind_rows(tibble(dates=get_dates(incidence_obj),
+                   incident_cases=get_counts(incidence_obj),
+                   data_type="observed")) -> obs_pred_mid_decay
+
+obs_pred_mid_decay %>%
+  ggplot(aes(x=dates, y=incident_cases, colour=data_type)) +
+    geom_point() +
+    geom_line() +
+    labs(x="", y="Daily incident confirmed cases",
+         title="Observed versus decay-phase projection of incident cases\nin Middlesex County",
+         subtitle="(model fitted to observed data up to May 1st only)") +
+     theme(legend.position="top", legend.title = element_blank())
+```
+
+This is a very interesting visual to see. From the current fitted model for Middlesex County, it is extrapolating past May 1st and predicting that Middlesex will see fairly low level of COVID-19 counts by June time. 
+
+Now to do the same extrapoloation for Worcester County. 
+
+```{r, echo = F}
+
+## Worcester County
+
+inc_mod <- worc_incidence_fit$after$model
+
+incidence_peak <- find_peak(incidence_obj2)
+
+preds <- exp(predict(inc_mod, newdata=data.frame(dates.x=1:100), type="response"))
+
+pred_decay_incidence <- tibble(dates= incidence_peak + 0:99,
+                               incident_cases=as.integer(preds),
+                               data_type="predicted")
+
+
+pred_decay_incidence %>%
+  bind_rows(tibble(dates=get_dates(incidence_obj2),
+                   incident_cases=get_counts(incidence_obj2),
+                   data_type="observed")) -> obs_pred_mid_decay
+
+obs_pred_mid_decay %>%
+  ggplot(aes(x=dates, y=incident_cases, colour=data_type)) +
+    geom_point() +
+    geom_line() +
+    labs(x="", y="Daily incident confirmed cases",
+         title="Observed versus decay-phase projection of incident cases\nin Worcester County",
+         subtitle="(model fitted to observed data up to May 1st only)") +
+     theme(legend.position="top", legend.title = element_blank())
+```
+
+Here it's clear that the model fit of the decay phase fit to Worcester County's COVID-19 counts, is having a significant effect on the model's extrapolations. Since there wasn't as much of a drop in cases past April 24th for Worcester compared to Middlesex, the decay phase is showing that it will take longer for Worcester to get to low level case counts. 
+
+Now, the predicted values here for Worcester are obviously affected by the sub-optimal fit of the decay phase model, as it wouldn't be expected that it will take another county in the same state over 2 months to extinguish counts compared to MiddleSex. Further data provided on the case counts for Worcester past the peak of April 24th will surely help increase accuracy of these predicted values. 
+
+_However_, this could be an insight into the fact that Middlesex could potentially get to lower transmissions prior to Worcester County. 
+
+# Conclusion 
+
+In conclusion and going back to my initial research question, there does seem to be evidence to suggest that COVID-19 infection rates and spread counts between county levels can certainly vary. 
+
+It is particularly intriguing to see these results between Middlesex and Worcester county as Middlesex has a larger population than Worcester by about 800 thousand people. However, we are seeing lower drops already in infectivity and predicted case counts moving into June time for Middlesex, compared to Worcester.  This again could be suggesting that social distancing measures are being carried out better in Middlesex county, and Worcester needs to make further measures to continue to keep social distancing consistent. 
+
+All in all, these types of analyses are vitally important during this current time period that we are living in. As we continue to fight the curve, these analyses need to be continuously updated, as our models and predictions will only become more accurate and provide better foresight, with the more data that is being fed in, ie. the current COVID-19 data being published world wide on a daily basis.
 
 
 
